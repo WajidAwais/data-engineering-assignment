@@ -26,7 +26,8 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 
 from src.config import REPO_ROOT, load_settings
-from src.geo import h3_index
+from src.geo import census, h3_index, roads
+from src.scoring import score as scoring
 from src.ingest import watermark
 
 from . import lineage, vault, windows
@@ -53,7 +54,7 @@ CSV_COLUMNS = [
     "contact.calling_window_local.basis",
     "eligibility_status", "blocked_until_date", "reason_codes", "legal_basis",
     "decision_lineage_id", "evaluated_at", "ruleset_version",
-    "priority_score",
+    "priority_score", "score_components",
 ]
 
 
@@ -62,7 +63,8 @@ def _iso(value) -> str | None:
 
 
 def build_record(record: dict, decision, *, token: str | None, ingested_at: str,
-                 as_of: date) -> dict:
+                 as_of: date, geography: tuple | None = None,
+                 road: dict | None = None, rules: dict | None = None) -> dict:
     """Assemble one record in the contract's nested shape."""
     window = record.get("_calling_window")
     scrub_age = record.get("dnc_scrub_age_days")
@@ -86,12 +88,16 @@ def build_record(record: dict, decision, *, token: str | None, ingested_at: str,
             # ZIP5 is retained deliberately: 18 U.S.C. 2725(3) excludes it from
             # "personal information", making it the legitimate aggregation key.
             "zip5": record.get("zip5"),
-            "census_tract": None,      # Phase 3b not built
-            "census_bg": None,         # Phase 3b not built
+            "census_bg": (geography or (None, None))[0],
+            "census_tract": (geography or (None, None))[1],
             "h3_r8": h3_index.cell(record.get("latitude"), record.get("longitude")),
             "iana_timezone": record.get("_iana_timezone"),
-            "road_class": None,        # Phase 3c not built
-            "snap_distance_m": None,   # Phase 3c not built
+            # Only an accepted snap is enrichment. A road class inherited from
+            # a segment 400 m away is fiction, so it is withheld rather than
+            # emitted with a caveat nobody downstream will read.
+            "road_class": (road or {}).get("road_class")
+                          if (road or {}).get("snap_quality") == "OK" else None,
+            "snap_distance_m": (road or {}).get("snap_distance_m"),
         },
         # Needs a crash link the fixture deliberately does not provide.
         "severity_ordinal": None,
@@ -123,9 +129,23 @@ def build_record(record: dict, decision, *, token: str | None, ingested_at: str,
         "decision_lineage_id": decision.decision_lineage_id,
         "evaluated_at": decision.evaluated_at.isoformat(),
         "ruleset_version": decision.ruleset_version,
-        "priority_score": None,        # Phase 4 not built
+        "priority_score": None,
         "score_components": None,
     }
+    if rules:
+        # Scored from the decision plus known crash facts. Only ELIGIBLE and
+        # BLOCKED_UNTIL are scorable — see src/scoring/score.py.
+        result = scoring.compute({
+            "eligibility_status": decision.status,
+            "severity_ordinal": payload["severity_ordinal"],
+            "incident_date": record.get("incident_date"),
+            "geo_quality": "OK",
+            "snap_quality": (road or {}).get("snap_quality"),
+        }, rules, as_of=as_of, spatial_risk=(road or {}).get("spatial_risk"))
+        if result is not None:
+            payload["priority_score"] = result.total
+            payload["score_components"] = result.components
+
     vault.assert_no_direct_identifiers(payload)
     return payload
 
@@ -152,6 +172,8 @@ def flatten(payload: dict) -> dict:
         "contact.calling_window_local.earliest": window.get("earliest"),
         "contact.calling_window_local.latest": window.get("latest"),
         "contact.calling_window_local.basis": window.get("basis"),
+        "score_components": json.dumps(payload["score_components"])
+                            if payload.get("score_components") else None,
         "reason_codes": "|".join(payload.get("reason_codes") or []),
         "legal_basis": " || ".join(payload.get("legal_basis") or []),
     }
@@ -179,6 +201,8 @@ def run(channel: str | None = None, *, out_name: str | None = None) -> dict:
 
     records = load_fixture()
     identities = load_identities()
+    geographies = census.lookup(records, settings=settings)
+    road_attrs = roads.lookup(records, settings=settings)
     tokens = {i["party_id"]: vault.phone_token(i["phone_e164"], key) for i in identities}
 
     con = watermark.connect(settings.warehouse_path)
@@ -200,6 +224,9 @@ def run(channel: str | None = None, *, out_name: str | None = None) -> dict:
             token=tokens.get(record["party_id"]),
             ingested_at=ingested_at,
             as_of=today,
+            geography=geographies.get(record["party_id"]),
+            road=road_attrs.get(record["party_id"]),
+            rules=engine.rules,
         )
         errors = sorted(check.iter_errors(payload), key=lambda e: e.path)
         if errors:

@@ -175,3 +175,28 @@ contact_gates:
 quality_gates:
   require_timezone: true
   timezone_unresolved_code: TIMEZONE_UNRESOLVED
+
+# ---------------------------------------------------------------------------
+# Lead prioritisation weights.
+#
+# Policy, not code — the relative worth of a severe lead versus a fresh one is a
+# business judgement and belongs beside the other rules, versioned with them.
+#
+# The weighting is deliberately lopsided toward facts we KNOW over a model we
+# fitted. The spatial-risk model backtests at ROC AUC 0.574 under H3-blocked
+# cross-validation: real but weak signal. Leaning on it would be dressing a
+# coin-flip as a ranking, so it acts as a tiebreaker and nothing more.
+# See ANALYSIS.md for the backtest and the leakage experiment behind that number.
+# ---------------------------------------------------------------------------
+scoring:
+  weights:
+    severity: 0.55       # known from the crash report, not predicted
+    recency: 0.30        # statutory windows expire; a stale lead is worth less
+    spatial_risk: 0.10   # model output, weak (AUC 0.574) — tiebreaker only
+    data_quality: 0.05   # penalise records we are less sure about
+  recency_halflife_days: 90
+  # Records with a rejected road snap or a flagged coordinate score lower: we are
+  # less confident in their enrichment, and confidence is part of lead value.
+  quality_penalty:
+    geo_not_ok: 0.5
+    snap_rejected: 0.25
