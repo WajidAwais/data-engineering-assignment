@@ -9,12 +9,12 @@
 # Default disposition is INELIGIBLE. Eligibility is proven per record, with a
 # citation, never assumed.
 
-version: "1.0.0"
+version: "1.1.0"
 
 # ---------------------------------------------------------------------------
 # Channel being modelled.
 #
-# The business asked for a live outbound call centre, so that is what v1.0.0
+# The business asked for a live outbound call centre, so that is what v1.1.0
 # evaluates. Changing this to `written` and bumping the version produces a
 # materially different answer with no code change — which is both the
 # demonstration Part 5 asks for and the Part 7 Q4 "what product shapes remain
@@ -123,9 +123,27 @@ contact_gates:
       16 C.F.R. 310.4(b)(3)(iv). The safe harbour requires a registry version
       obtained no more than 31 days before the call.
   internal_dnc:
+    # The company-specific list. Honoured regardless of any exemption below: a
+    # do-not-call request made directly to the seller outranks an established
+    # business relationship (64.1200(d)(3)), so this is evaluated first and is
+    # never waived by the EBR block.
+    listed_blocks: true
     honor_within_days: 30
     retain_years: 5
+    code: INTERNAL_DNC
     citation: 47 C.F.R. 64.1200(d).
+  established_business_relationship:
+    # An affirmative exemption, and a NARROW one. It exempts a number from the
+    # NATIONAL registry only. It does not cure an internal do-not-call request,
+    # and it does nothing at all to the categorical bars or the source gates —
+    # so on this channel it cannot move a record to ELIGIBLE by itself.
+    enabled: true
+    transaction_months: 18
+    inquiry_months: 3
+    code: ELIGIBLE_EBR
+    citation: >-
+      16 C.F.R. 310.4(b)(1)(iii)(B)(ii); 47 C.F.R. 64.1200(f)(5). 18 months
+      from a transaction, 3 months from a consumer inquiry.
   reassigned_numbers:
     # The single most common engineering misreading of the RND: the safe
     # harbour attaches ONLY to a "No". "No Data" is not a green light.

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from dateutil.relativedelta import relativedelta
 
 from src.geo.timezone import TimezoneResolver
 
@@ -181,14 +182,57 @@ class EligibilityEngine:
             earliest,
         )
 
-    def _gate_contact(self, record: dict) -> GateVerdict:
-        """DNC, RND, line type, consent."""
+    def _ebr_open(self, record: dict, today: date) -> str | None:
+        """Is an established business relationship still inside its window?
+
+        Returns the basis ("transaction" / "inquiry") while the window is open,
+        else None. 16 C.F.R. 310.4(b)(1)(iii)(B)(ii) and 47 C.F.R. 64.1200(f)(5)
+        run 18 months from a transaction and 3 months from a consumer inquiry.
+
+        Fails closed: an EBR asserted without a date is not an EBR, because the
+        exemption is defined by the age of the relationship and an undated claim
+        cannot be shown to be inside the window.
+        """
+        cfg = self.rules["contact_gates"].get("established_business_relationship", {})
+        if not cfg.get("enabled"):
+            return None
+
+        basis = record.get("ebr_basis")
+        months = {"transaction": cfg.get("transaction_months"),
+                  "inquiry": cfg.get("inquiry_months")}.get(basis)
+        since = record.get("ebr_basis_date")
+        if months is None or since is None:
+            return None
+
+        # Calendar months, not 30-day approximations: the rule is written in
+        # months and 18 * 30 days is eleven days short of eighteen months.
+        expires = since + relativedelta(months=months)
+        return basis if today <= expires else None
+
+    def _gate_contact(self, record: dict, today: date) -> GateVerdict:
+        """Internal DNC, EBR, national DNC, RND, line type, consent."""
         cfg = self.rules["contact_gates"]
         codes, details = [], []
 
+        # Evaluated before the national registry and never waived below: a
+        # do-not-call request made directly to the seller outranks an EBR per
+        # 47 C.F.R. 64.1200(d)(3).
+        internal = cfg.get("internal_dnc", {})
+        if internal.get("listed_blocks") and record.get("on_internal_dnc"):
+            codes.append(ReasonCode.INTERNAL_DNC)
+            details.append("internal do-not-call request on file")
+
+        # The EBR exempts the NATIONAL registry only. It is not a general pass,
+        # and it cannot reach the categorical bars or the source gates.
+        ebr = self._ebr_open(record, today)
+
         dnc = cfg["dnc"]
         if dnc["national_listed_blocks"] and record.get("on_national_dnc"):
-            codes.append(ReasonCode.DNC_LISTED)
+            if ebr:
+                codes.append(ReasonCode.ELIGIBLE_EBR)
+                details.append(f"national DNC listing exempted by {ebr} EBR")
+            else:
+                codes.append(ReasonCode.DNC_LISTED)
         age = record.get("dnc_scrub_age_days")
         if age is None or age > dnc["max_scrub_age_days"]:
             codes.append(ReasonCode.DNC_SCRUB_STALE)
@@ -233,7 +277,11 @@ class EligibilityEngine:
                     codes.append(ReasonCode.CONSENT_UNVERIFIABLE)
                     details.append(f"consent provenance missing: {', '.join(missing)}")
 
-        return GateVerdict("contact", not codes, codes, "; ".join(details) or None)
+        # An affirmative code is evidence *for* contact, not against it, so it
+        # must not fail the gate it appears in. Without this an EBR-exempted
+        # record would be blocked by the very code recording its exemption.
+        blocking = [c for c in codes if not str(c).startswith("ELIGIBLE_")]
+        return GateVerdict("contact", not blocking, codes, "; ".join(details) or None)
 
     # -- entry point ---------------------------------------------------------
 
@@ -257,7 +305,7 @@ class EligibilityEngine:
             self._gate_quality(record),
             self._gate_source(record),
             self._gate_channel(record),
-            self._gate_contact(record),
+            self._gate_contact(record, today),
         ]
         timing_verdict, blocked_until = self._gate_timing(record, today)
         verdicts.append(timing_verdict)

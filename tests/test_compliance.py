@@ -345,3 +345,100 @@ def test_same_input_and_ruleset_give_the_same_decision(engine):
     assert a.reason_codes == b.reason_codes
     assert a.legal_basis == b.legal_basis
     assert a.decision_lineage_id != b.decision_lineage_id, "lineage ids must be unique"
+
+
+# --- internal DNC and the EBR exemption -------------------------------------
+
+
+def test_internal_dnc_request_blocks(engine):
+    """47 C.F.R. 64.1200(d). The company-specific list is independent of the
+    national registry: a record clean against the registry is still blocked by
+    a request made directly to the seller."""
+    codes = engine.evaluate(
+        _record(on_national_dnc=False, on_internal_dnc=True), today=TODAY
+    ).reason_codes
+    assert ReasonCode.INTERNAL_DNC in codes
+
+
+def test_ebr_exempts_the_national_registry_within_the_window(engine):
+    """16 C.F.R. 310.4(b)(1)(iii)(B)(ii): 18 months from a transaction. A listed
+    number inside that window is exempt, and the exemption is recorded
+    affirmatively rather than by the absence of a code."""
+    codes = engine.evaluate(
+        _record(on_national_dnc=True, ebr_basis="transaction",
+                ebr_basis_date=date(2025, 6, 1)),   # 15 months before TODAY
+        today=TODAY,
+    ).reason_codes
+    assert ReasonCode.ELIGIBLE_EBR in codes
+    assert ReasonCode.DNC_LISTED not in codes
+
+
+def test_ebr_expires_and_the_listing_bites_again(engine):
+    """19 months after the transaction the exemption is gone. Months are
+    calendar months — 18 * 30 days would still be inside the window here."""
+    codes = engine.evaluate(
+        _record(on_national_dnc=True, ebr_basis="transaction",
+                ebr_basis_date=date(2025, 2, 1)),   # 19 months before TODAY
+        today=TODAY,
+    ).reason_codes
+    assert ReasonCode.DNC_LISTED in codes
+    assert ReasonCode.ELIGIBLE_EBR not in codes
+
+
+def test_inquiry_ebr_is_three_months_not_eighteen(engine):
+    """The two bases carry different windows; using the transaction window for
+    an inquiry would exempt a number for fifteen months too long."""
+    stale = engine.evaluate(
+        _record(on_national_dnc=True, ebr_basis="inquiry",
+                ebr_basis_date=date(2026, 4, 1)),   # 5 months — outside 3
+        today=TODAY,
+    ).reason_codes
+    fresh = engine.evaluate(
+        _record(on_national_dnc=True, ebr_basis="inquiry",
+                ebr_basis_date=date(2026, 7, 1)),   # 2 months — inside 3
+        today=TODAY,
+    ).reason_codes
+    assert ReasonCode.DNC_LISTED in stale
+    assert ReasonCode.ELIGIBLE_EBR in fresh
+
+
+def test_undated_ebr_claim_is_not_an_ebr(engine):
+    """The exemption is defined by the age of the relationship, so a claim with
+    no date cannot be shown to be inside the window. Fails closed."""
+    codes = engine.evaluate(
+        _record(on_national_dnc=True, ebr_basis="transaction", ebr_basis_date=None),
+        today=TODAY,
+    ).reason_codes
+    assert ReasonCode.DNC_LISTED in codes
+    assert ReasonCode.ELIGIBLE_EBR not in codes
+
+
+def test_internal_dnc_outranks_the_ebr(engine):
+    """47 C.F.R. 64.1200(d)(3). An EBR exempts the national registry only — it
+    never overrides a do-not-call request made to the seller itself. This is the
+    precedence that makes the two rules distinct rather than redundant."""
+    decision = engine.evaluate(
+        _record(on_national_dnc=True, on_internal_dnc=True,
+                ebr_basis="transaction", ebr_basis_date=date(2025, 6, 1)),
+        today=TODAY,
+    )
+    assert ReasonCode.INTERNAL_DNC in decision.reason_codes
+    assert decision.status == "INELIGIBLE"
+
+
+def test_ebr_does_not_cure_the_categorical_bar(engine):
+    """An EBR is a DNC exemption, not a licence to solicit. On live telephone
+    the categorical bar still stands, so the record stays INELIGIBLE."""
+    decision = engine.evaluate(
+        _record(on_national_dnc=True, ebr_basis="transaction",
+                ebr_basis_date=date(2025, 6, 1)),
+        today=TODAY,
+    )
+    assert decision.status == "INELIGIBLE"
+    assert ReasonCode.LIVE_SOLICITATION_PROHIBITED in decision.reason_codes
+
+
+def test_every_new_code_carries_a_citation(engine):
+    """A reason code without a legal basis is an opinion, not a control."""
+    for code in (ReasonCode.INTERNAL_DNC, ReasonCode.ELIGIBLE_EBR):
+        assert engine.citations_for([code])[0].strip()

@@ -61,6 +61,14 @@ def _parse_row(row: dict) -> dict:
         "dnc_scrub_age_days": int(row["dnc_scrub_age_days"]) if row["dnc_scrub_age_days"] else None,
         "consent_on_file": _BOOL.get(row["consent_on_file"].lower()),
         "consent_revoked": _BOOL.get(row["consent_revoked"].lower()),
+        # The supplied fixture carries no internal-DNC or EBR columns, so both
+        # read as absent here and the gates are inert against it. They are
+        # exercised directly in tests/test_compliance.py. Absent is the safe
+        # reading for each: no suppression entry means not suppressed, and an
+        # undated EBR claim is not an EBR.
+        "on_internal_dnc": _BOOL.get((row.get("on_internal_dnc") or "").lower()),
+        "ebr_basis": row.get("ebr_basis") or None,
+        "ebr_basis_date": as_date(row.get("ebr_basis_date")),
         # Provenance is affirmatively known for the fixture: it is synthetic and
         # its origin is documented. A real record would have to prove this.
         "provenance_known": True,
