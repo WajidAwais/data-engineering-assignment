@@ -17,3 +17,4 @@ tenacity>=9.0
 osmnx>=2.1
 python-dateutil>=2.9
 pytest>=8.0
+pytz>=2024.1   # duckdb needs it to return TIMESTAMPTZ to python

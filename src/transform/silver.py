@@ -187,6 +187,7 @@ def build_crash(con: duckdb.DuckDBPyConnection) -> None:
             m.light                              AS light,
             m.surface_condition                  AS surface_condition,
             m."_run_id"                          AS bronze_run_id,
+            TRY_CAST(m.crash_date_time AS TIMESTAMP) IS NOT NULL AS time_known,
             m."_content_hash"                    AS content_hash
         FROM moco m
         LEFT JOIN moco_party_sev p USING (report_number)
@@ -215,6 +216,7 @@ def build_crash(con: duckdb.DuckDBPyConnection) -> None:
             NULL                                 AS light,
             NULL                                 AS surface_condition,
             t."_run_id"                          AS bronze_run_id,
+            t.crash_time IS NOT NULL             AS time_known,
             t."_content_hash"                    AS content_hash
         FROM txdot t
     ),
@@ -254,6 +256,7 @@ def build_crash(con: duckdb.DuckDBPyConnection) -> None:
             NULL                                 AS light,
             NULL                                 AS surface_condition,
             f."_run_id"                          AS bronze_run_id,
+            TRY_CAST(f.HOUR AS INTEGER) BETWEEN 0 AND 23 AS time_known,
             f."_content_hash"                    AS content_hash
         FROM fars f
     ),

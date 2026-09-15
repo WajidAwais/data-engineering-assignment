@@ -27,6 +27,7 @@ BUILD_HINT = {
     "bronze_fars_accident": "python -m src.ingest.fars",
     "silver_crash": "python -m src.transform.silver",
     "silver_party": "python -m src.transform.silver",
+    "silver_crash_geo": "python -m src.geo.enrich",
 }
 
 
@@ -71,6 +72,11 @@ def silver_crash_fact(warehouse):
 @pytest.fixture
 def silver_party(warehouse):
     return warehouse, _require(warehouse, "silver_party")
+
+
+@pytest.fixture
+def silver_geo(warehouse):
+    return warehouse, _require(warehouse, "silver_crash_geo")
 
 
 @pytest.fixture
