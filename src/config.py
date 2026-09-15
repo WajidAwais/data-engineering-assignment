@@ -32,6 +32,7 @@ class Settings:
     default_start_date: str
     output_dir: str
     sources: dict
+    compliance: dict
 
     @property
     def data_dir(self) -> Path:
@@ -54,5 +55,6 @@ def load_settings() -> Settings:
         socrata_app_token=keys.get("socrata_app_token", ""),
         default_start_date=run.get("default_start_date", ""),
         output_dir=run.get("output_dir", "data"),
+        compliance=settings.get("compliance", {}),
         sources=sources,
     )

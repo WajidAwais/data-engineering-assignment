@@ -1,6 +1,6 @@
-jurisdiction,record_type,days_from,anchor_field,legal_basis,notes
-FL,crash_report,60,report_filing_date,"Fla. Stat. 316.066(2)","Data-access gate. Binds over the bar rule."
-FL,written_solicitation,30,incident_date,"R. Reg. Fla. Bar 4-7.18(b)(1)(A)",
-TX,written_solicitation,31,incident_date,"Tex. Penal Code 38.12(d)(2)(C)","Class A misdemeanor; felony on repeat."
-MD,,,,,"INCOMPLETE — research and complete this row. See Md. Rule 19-307.3."
-US,aviation_accident,45,incident_date,"49 U.S.C. 1136(g)(2)","Edge case. Included to test your lookup design."
+jurisdiction,record_type,days_from,anchor_field,reason_code,legal_basis,notes
+FL,crash_report,60,report_filing_date,FL_CRASH_REPORT_60D,Fla. Stat. 316.066(2),Data-access gate. Binds over the bar rule.
+FL,written_solicitation,30,incident_date,FL_SOLICITATION_30D,R. Reg. Fla. Bar 4-7.18(b)(1)(A),
+TX,written_solicitation,31,incident_date,TX_SOLICITATION_31D,Tex. Penal Code 38.12(d)(2)(C),Class A misdemeanor; felony on repeat.
+MD,crash_report,0,incident_date,MD_NO_WAITING_PERIOD_METHOD_BARRED,Md. Code Gen. Prov. 4-320; Md. Rule 19-307.3,"No accident-specific waiting period exists in Maryland. The constraint is on the METHOD, not the timing: Md. Rule 19-307.3 bars live person-to-person solicitation (incl. live telephone per ABA MR 7.3 cmt), and Gen. Prov. 4-320 expressly bars telephone solicitation using MVA personal information. A zero-day window here is correct and is NOT the same as 'no restriction' — see channel_gates in compliance/rules.yaml."
+US,aviation_accident,45,incident_date,AVIATION_45D,49 U.S.C. 1136(g)(2),Edge case. Included to test your lookup design.

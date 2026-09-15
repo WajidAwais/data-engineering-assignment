@@ -7,3 +7,12 @@ socrata_app_token = ""   # optional — lifts anonymous throttling
 [run]
 default_start_date = "2024-01-01"
 output_dir         = "data"
+
+[compliance]
+# Frozen per fixtures/README.md: the fixture's dates are anchored to 2026-09-01.
+# Letting "today" drift would silently change which records are blocked.
+evaluation_date = "2026-09-01"
+ruleset_path    = "compliance/rules.yaml"
+# HMAC key for phone tokenisation. settings.toml is gitignored; in production
+# this comes from a KMS, not a file, and rotates on a documented schedule.
+token_key       = "CHANGE-ME-local-dev-only"

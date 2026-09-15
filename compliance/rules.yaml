@@ -1,0 +1,177 @@
+# Contact-eligibility ruleset.
+#
+# This file is the control. No legal constant belongs in Python — adding a
+# jurisdiction, changing a waiting period or switching channel must be an edit
+# here plus a version bump, never a code change. Part 5 says this will be tested
+# live ("Ohio just enacted a 45-day accident solicitation window, effective in
+# three weeks").
+#
+# Default disposition is INELIGIBLE. Eligibility is proven per record, with a
+# citation, never assumed.
+
+version: "1.0.0"
+
+# ---------------------------------------------------------------------------
+# Channel being modelled.
+#
+# The business asked for a live outbound call centre, so that is what v1.0.0
+# evaluates. Changing this to `written` and bumping the version produces a
+# materially different answer with no code change — which is both the
+# demonstration Part 5 asks for and the Part 7 Q4 "what product shapes remain
+# viable" analysis.
+# ---------------------------------------------------------------------------
+channel: live_telephone
+
+channels:
+  live_telephone:
+    description: Live agent dialling a natural person to solicit business.
+    # Gates that apply to this channel regardless of the record.
+    categorical_bars:
+      - code: LIVE_SOLICITATION_PROHIBITED
+        applies_to: [MD, FL, TX]
+        citation: >-
+          ABA Model Rule 7.3(b); Md. Rule 19-307.3; R. Reg. Fla. Bar
+          4-7.18(a); Tex. Disciplinary R. Prof. Conduct 7.03. The ABA comment
+          defines "live person-to-person contact" to include live telephone.
+      - code: TX_BARRATRY_FELONY
+        applies_to: [TX]
+        citation: >-
+          Tex. Penal Code 38.12(a)(2). Telephone solicitation for economic
+          benefit is barratry, a third-degree felony, and reaches the caller
+          personally rather than only the firm.
+      - code: MD_MVA_TELEPHONE_SOLICITATION_BAR
+        applies_to: [MD]
+        citation: >-
+          Md. Code Gen. Prov. 4-320 expressly bars use of MVA personal
+          information for telephone solicitation.
+  written:
+    description: Targeted written communication (mail).
+    categorical_bars: []
+    # Written solicitation is time-gated rather than barred outright; the
+    # blackout table supplies the windows.
+    blackout_record_type: written_solicitation
+
+# ---------------------------------------------------------------------------
+# Source eligibility. Applies before any channel question.
+# ---------------------------------------------------------------------------
+source_gates:
+  - code: DPPA_NO_PERMISSIBLE_USE
+    citation: >-
+      18 U.S.C. 2721(b). Solicitation appears only at (b)(12) and requires
+      consent obtained by the State; no state runs such a program at scale.
+      Maracich v. Spears, 570 U.S. 48 (2013) forecloses the (b)(4) litigation
+      exception for client solicitation. Penalties under 2724 carry a $2,500
+      statutory floor per record.
+    # Satisfied only by affirmative, record-level consent provenance.
+    satisfied_by: consent_on_file
+  - code: PROVENANCE_UNKNOWN
+    citation: >-
+      A record whose acquisition basis cannot be stated cannot be contacted.
+      DPPA 2721(c) independently requires 5-year redisclosure records naming
+      each recipient and permitted purpose.
+    satisfied_by: provenance_known
+
+# ---------------------------------------------------------------------------
+# Time-based gates. Loaded from config/blackout_windows.csv — a data table, not
+# branches. Each row is (jurisdiction, record_type) -> earliest_contact_date.
+# ---------------------------------------------------------------------------
+blackout_windows:
+  source: config/blackout_windows.csv
+  # Where several rows match one record, the LONGEST window binds. Florida is
+  # the worked example: the 60-day data gate at Fla. Stat. 316.066(2) outlasts
+  # the 30-day bar rule at 4-7.18(b)(1)(A), so implementing only the bar rule
+  # implements the wrong constraint.
+  resolution: longest_wins
+  default_record_type: crash_report
+
+# ---------------------------------------------------------------------------
+# Calling windows, local time at the CALLED PARTY's location.
+# ---------------------------------------------------------------------------
+calling_windows:
+  federal:
+    earliest: "08:00"
+    latest: "21:00"
+    citation: 16 C.F.R. 310.4(c); 47 C.F.R. 64.1200(c)(1).
+  state_overrides:
+    FL:
+      earliest: "08:00"
+      latest: "20:00"
+      citation: Fla. Stat. 501.616(6).
+    OK:
+      earliest: "08:00"
+      latest: "20:00"
+      citation: Okla. Stat. tit. 15, 775B.3.
+    WA:
+      earliest: "08:00"
+      latest: "20:00"
+      citation: Wash. Rev. Code 19.158.110.
+  # When the address-derived zone and the NPA-derived zone disagree, take the
+  # INTERSECTION. Number portability and VoIP mean NPA-NXX is not reliable
+  # evidence of physical location, so neither source can be trusted alone.
+  disagreement_resolution: intersect
+
+# ---------------------------------------------------------------------------
+# Channel/contact gates.
+# ---------------------------------------------------------------------------
+contact_gates:
+  dnc:
+    national_listed_blocks: true
+    citation: 47 C.F.R. 64.1200(c)(2).
+    max_scrub_age_days: 31
+    staleness_code: DNC_SCRUB_STALE
+    staleness_citation: >-
+      16 C.F.R. 310.4(b)(3)(iv). The safe harbour requires a registry version
+      obtained no more than 31 days before the call.
+  internal_dnc:
+    honor_within_days: 30
+    retain_years: 5
+    citation: 47 C.F.R. 64.1200(d).
+  reassigned_numbers:
+    # The single most common engineering misreading of the RND: the safe
+    # harbour attaches ONLY to a "No". "No Data" is not a green light.
+    # QUOTED DELIBERATELY. YAML 1.1 parses bare NO/YES as booleans, so
+    # `[NO]` silently becomes `[False]` and the RND rule stops matching any
+    # response string. The failure is invisible — the list is still a list.
+    safe_harbour_responses: ["NO"]
+    blocking_responses: ["YES"]
+    no_data_is_not_safe_harbour: true
+    citation: 47 C.F.R. 64.1200(m).
+  line_type:
+    # voip and unknown route to the MOST restrictive treatment, never the most
+    # permissive. 227(b)(1)(A)(iii) attaches strict liability to autodialled or
+    # prerecorded calls to wireless numbers.
+    restrictive: [wireless, voip, unknown]
+    permissive: [landline]
+    unresolved_code: LINE_TYPE_UNRESOLVED
+    citation: 47 U.S.C. 227(b)(1)(A)(iii); 227(c).
+  consent:
+    required: true
+    revocation_honored_within_business_days: 10
+    citation: >-
+      47 C.F.R. 64.1200(a)(10). Burden of proving consent is on the caller;
+      unverifiable consent is functionally no consent. Retain at least through
+      the 4-year TCPA limitations period.
+    # The fixture supplies consent as a bare boolean with NO provenance — no
+    # disclosure text, hash, URL, timestamp, IP, user agent, seller list or
+    # source chain. The brief is explicit that the burden of proving consent is
+    # on the caller and that unverifiable consent is functionally no consent.
+    #
+    # Default false because the fixture is a test harness. Setting it true is
+    # what production demands, and doing so takes the written channel from 25
+    # eligible leads to zero — which is the honest measure of how thin a bare
+    # boolean actually is.
+    require_provenance: false
+    provenance_fields:
+      [obtained_at, disclosure_hash, disclosure_url, ip_address, user_agent,
+       sellers_named, source_chain]
+    # Deliberately NOT modelled as binding federal law: the FCC's one-to-one
+    # consent rule was vacated in Insurance Marketing Coalition v. FCC,
+    # 127 F.4th 303 (11th Cir. 2025) and repealed by final rule in Sept 2025.
+    one_to_one_required: false
+
+# ---------------------------------------------------------------------------
+# Data-quality gates. A record we cannot place cannot be given a calling window.
+# ---------------------------------------------------------------------------
+quality_gates:
+  require_timezone: true
+  timezone_unresolved_code: TIMEZONE_UNRESOLVED
