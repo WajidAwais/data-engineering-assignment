@@ -241,3 +241,61 @@ def test_party_dedup_keeps_same_run_person_id_collisions():
         f"expected both same-run siblings plus the amended row, got {kept}"
     )
     con.close()
+
+
+# --- cross-source overlap (XS1) ---------------------------------------------
+
+
+def _overlap_rate(con, source, jurisdiction, year_lo, year_hi):
+    """Fatal crashes in a state source that also appear in FARS, matched on
+    same-date plus a ~500 m coordinate window."""
+    return con.execute(
+        f"""
+        WITH s AS (
+            SELECT crash_date, latitude, longitude FROM silver_crash
+             WHERE source_system = ? AND severity_ordinal = 4 AND geo_quality = 'OK'
+               AND crash_date BETWEEN ? AND ?
+        ), f AS (
+            SELECT crash_date, latitude, longitude FROM silver_crash
+             WHERE source_system = 'NHTSA_FARS' AND jurisdiction = ? AND geo_quality = 'OK'
+        )
+        SELECT (SELECT count(*) FROM s),
+               (SELECT count(*) FROM s JOIN f USING (crash_date)
+                 WHERE abs(s.latitude - f.latitude) < 0.005
+                   AND abs(s.longitude - f.longitude) < 0.005)
+        """,
+        [source, year_lo, year_hi, jurisdiction],
+    ).fetchone()
+
+
+def test_state_sources_and_fars_are_not_disjoint(silver_crash_fact):
+    """FARS is a fatality census, so a fatal crash in a state feed should also
+    be in FARS. Measured 2026-09-15: 97% for Montgomery, 98% for TxDOT.
+
+    This is asserted because the consequence is structural — a naive UNION ALL
+    double-counts roughly 637 fatal crashes, and any fatality rate over the
+    union is inflated. Treating the universes as disjoint would be wrong.
+    """
+    con, _ = silver_crash_fact
+
+    md_total, md_matched = _overlap_rate(con, "MONTGOMERY_MD", "MD", "2019-01-01", "2024-12-31")
+    tx_total, tx_matched = _overlap_rate(con, "TXDOT_CRIS", "TX", "2020-01-01", "2024-12-31")
+
+    assert md_total > 0 and tx_total > 0, "no fatal crashes to compare"
+    # A floor, not the measured value: the sources are live and the match is a
+    # proximity heuristic, so pinning 0.97 exactly would rot.
+    assert md_matched / md_total > 0.85, (
+        f"Montgomery/FARS overlap fell to {md_matched}/{md_total} — either the "
+        "universes changed or the matching window is wrong"
+    )
+    assert tx_matched / tx_total > 0.85, f"TxDOT/FARS overlap fell to {tx_matched}/{tx_total}"
+
+
+def test_deduplication_is_required_before_any_union(silver_crash_fact):
+    """The overlap is large enough that it must be handled, not noted. Phase 3
+    resolves it; this pins the size of the problem so a later 'it's negligible'
+    claim has to argue with a number."""
+    con, _ = silver_crash_fact
+    _, md = _overlap_rate(con, "MONTGOMERY_MD", "MD", "2019-01-01", "2024-12-31")
+    _, tx = _overlap_rate(con, "TXDOT_CRIS", "TX", "2020-01-01", "2024-12-31")
+    assert md + tx > 500, f"expected several hundred duplicate fatal crashes, found {md + tx}"
