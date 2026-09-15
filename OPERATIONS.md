@@ -16,16 +16,52 @@ dagster dev -f orchestration/definitions.py
 
 ### The graph
 
-```
-bronze_montgomery (daily) ─┐
-bronze_txdot               ├─> silver_crash ─┬─> silver_contracts ─┐
-bronze_fars                ┘                 │                     │
-                                             ├─> drift_report      │
-                                             │                     │
-                                             └─> silver_crash_geo ─┼─> census_geography ─┐
-                                                                   ├─> road_snapping ────┼─> gold_analysis
-                                                                   │                     └─> gold_crash_risk ─┐
-                                                                   └─────────────────────────────────────────┴─> gold_lead_decision
+```mermaid
+flowchart LR
+    subgraph bronze
+        bronze_montgomery["bronze_montgomery<br/>(daily partitions)"]
+        bronze_txdot
+        bronze_fars
+    end
+
+    subgraph silver
+        silver_crash
+        silver_contracts
+    end
+
+    subgraph geo
+        silver_crash_geo
+        census_geography
+        road_snapping
+    end
+
+    subgraph gold
+        gold_analysis
+        gold_crash_risk
+        gold_lead_decision
+    end
+
+    subgraph ops
+        drift_report
+    end
+
+    bronze_montgomery --> silver_crash
+    bronze_txdot --> silver_crash
+    bronze_fars --> silver_crash
+
+    silver_crash --> silver_contracts
+    silver_crash --> silver_crash_geo
+    silver_crash --> drift_report
+
+    silver_crash_geo --> census_geography
+    silver_crash_geo --> road_snapping
+
+    census_geography --> gold_analysis
+    road_snapping --> gold_analysis
+    road_snapping --> gold_crash_risk
+
+    silver_contracts --> gold_lead_decision
+    gold_crash_risk --> gold_lead_decision
 ```
 
 12 assets, 4 groups, scheduled daily at 06:00.
