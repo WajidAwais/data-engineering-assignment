@@ -1,0 +1,47 @@
+# Data contract: bronze Montgomery tables.
+#
+# Bronze is deliberately all-TEXT and faithful to the source, so the contract
+# checks STRUCTURE and REFERENTIAL INTEGRITY rather than value cleanliness —
+# asserting clean values here would fail on data that is correctly preserved.
+
+table: bronze_montgomery_incidents
+layer: bronze
+description: Raw Socrata incidents, append-only, versioned by content hash.
+
+columns:
+  _source_record_id:
+    type: VARCHAR
+    nullable: false
+  _content_hash:
+    type: VARCHAR
+    nullable: false
+  _ingested_at:
+    type: VARCHAR
+    nullable: false
+  _run_id:
+    type: VARCHAR
+    nullable: false
+  report_number:
+    type: VARCHAR
+    nullable: false
+
+grain:
+  # Append-only: the same record may appear many times, once per content version.
+  unique_by: [_source_record_id, _content_hash]
+
+expectations:
+  - name: drivers_reference_a_known_crash
+    description: >
+      DIRECTION MATTERS. drivers is a subset of incidents, so every driver row
+      must reference a known crash. The REVERSE is false by design — 785
+      Montgomery crashes have no driver row (DATA_QUALITY A4), and a contract
+      asserting incidents ⊆ drivers would fail on correct data.
+    sql: >
+      SELECT count(*) FROM (
+        SELECT DISTINCT report_number FROM bronze_montgomery_drivers
+        EXCEPT SELECT DISTINCT report_number FROM bronze_montgomery_incidents)
+    expect: 0
+  - name: raw_payload_is_preserved
+    description: Part 1 requires the raw payload kept alongside the parsed form.
+    sql: SELECT count(*) FROM bronze_montgomery_incidents WHERE _raw_record IS NULL
+    expect: 0

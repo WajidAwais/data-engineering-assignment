@@ -1,0 +1,78 @@
+# Data contract: silver_crash
+#
+# Part 6 asks for contracts "at every layer boundary, with enforced types,
+# nullability, ranges, and referential expectations". Hand-rolled, which the
+# brief explicitly permits — Great Expectations is a large dependency for checks
+# this shape.
+#
+# A violation FAILS. A contract that warns is documentation.
+
+table: silver_crash
+layer: silver
+description: One row per crash, all three sources conformed.
+
+columns:
+  crash_sk:
+    type: VARCHAR
+    nullable: false
+    unique: true
+  source_system:
+    type: VARCHAR
+    nullable: false
+    allowed: [MONTGOMERY_MD, TXDOT_CRIS, NHTSA_FARS, OTHER]
+  source_record_id:
+    type: VARCHAR
+    nullable: false
+  jurisdiction:
+    type: VARCHAR
+    nullable: false
+    # The compliance gate keys blackout windows on this, so a malformed value
+    # silently skips a statutory waiting period.
+    matches: '^[A-Z]{2}$'
+  crash_timestamp:
+    type: TIMESTAMP
+    nullable: true      # FARS sentinel times legitimately produce null
+  severity_ordinal:
+    type: INTEGER
+    nullable: true      # unknown is a real answer; see severity_basis
+    min: 0
+    max: 5              # contracts/lead_output.schema.json bounds it here
+  severity_basis:
+    type: VARCHAR
+    nullable: false     # every row must say HOW its severity was derived
+    allowed: [moco_party_max, moco_report_type, txdot_crash_sev_id, fars_fatality_census]
+  geo_quality:
+    type: VARCHAR
+    nullable: false
+    allowed: [OK, OUT_OF_ENVELOPE, SENTINEL, MISSING]
+  latitude:
+    type: DOUBLE
+    nullable: true
+    min: -90
+    max: 90
+  longitude:
+    type: DOUBLE
+    nullable: true
+    min: -180
+    max: 180
+  time_known:
+    type: BOOLEAN
+    nullable: false
+
+grain:
+  # The Phase 2 bug: keyed on the bronze record id, amended Montgomery crashes
+  # appeared twice because the source re-issues them under a new Socrata :id.
+  unique_by: [source_system, source_record_id]
+
+expectations:
+  - name: sentinel_coordinates_are_nulled
+    description: A SENTINEL row must not carry a usable coordinate.
+    sql: SELECT count(*) FROM silver_crash WHERE geo_quality='SENTINEL' AND latitude IS NOT NULL
+    expect: 0
+  - name: montgomery_coordinates_within_maryland
+    description: Out-of-envelope crashes must be flagged, not passed through as OK.
+    sql: >
+      SELECT count(*) FROM silver_crash WHERE source_system='MONTGOMERY_MD'
+        AND geo_quality='OK'
+        AND (latitude NOT BETWEEN 38.9 AND 39.36 OR longitude NOT BETWEEN -77.54 AND -76.87)
+    expect: 0

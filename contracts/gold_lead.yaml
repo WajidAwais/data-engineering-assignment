@@ -1,0 +1,56 @@
+# Data contract: gold_lead_decision
+#
+# The boundary the downstream contact centre consumes. The per-record JSON shape
+# is enforced separately by contracts/lead_output.schema.json; this covers the
+# table-level invariants that schema cannot express.
+
+table: gold_lead_decision
+layer: gold
+description: Eligibility decisions per lead, per channel.
+
+columns:
+  lead_id:
+    type: VARCHAR
+    nullable: false
+  channel:
+    type: VARCHAR
+    nullable: false
+    allowed: [live_telephone, written]
+  eligibility_status:
+    type: VARCHAR
+    nullable: false
+    allowed: [ELIGIBLE, INELIGIBLE, BLOCKED_UNTIL]
+  reason_codes:
+    type: VARCHAR
+    nullable: false     # minItems 1 in the output contract
+  decision_lineage_id:
+    type: VARCHAR
+    nullable: false     # every decision must be reconstructable
+  ruleset_version:
+    type: VARCHAR
+    nullable: false
+    matches: '^[0-9]+\.[0-9]+\.[0-9]+$'
+
+grain:
+  unique_by: [lead_id, channel]
+
+expectations:
+  - name: every_decision_has_a_reason
+    description: A decision with no stated reason is not a decision.
+    sql: SELECT count(*) FROM gold_lead_decision WHERE reason_codes = ''
+    expect: 0
+  - name: every_decision_has_lineage
+    description: >
+      Part 5 - "if you cannot reconstruct why a record was released eighteen
+      months from now, you have not built a compliance control, you have built
+      a filter."
+    sql: >
+      SELECT count(*) FROM gold_lead_decision d
+       WHERE NOT EXISTS (SELECT 1 FROM compliance_decision_lineage l
+                          WHERE l.decision_lineage_id = d.decision_lineage_id)
+    expect: 0
+  - name: blocked_until_carries_a_date
+    sql: >
+      SELECT count(*) FROM gold_lead_decision
+       WHERE eligibility_status='BLOCKED_UNTIL' AND blocked_until_date IS NULL
+    expect: 0
