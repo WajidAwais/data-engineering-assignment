@@ -20,3 +20,5 @@ pytest>=8.0
 pytz>=2024.1   # duckdb needs it to return TIMESTAMPTZ to python
 pyyaml>=6.0     # compliance ruleset is data, not code
 jsonschema>=4.23  # validates every emitted record against the output contract
+dagster>=1.13         # orchestration; partitioned assets for failed-partition recovery
+dagster-webserver>=1.13
