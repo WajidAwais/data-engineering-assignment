@@ -34,9 +34,11 @@ MAX_ATTEMPTS = 6
 
 
 class RetryableHTTPError(Exception):
-    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+    def __init__(self, message: str, *, retry_after: float | None = None,
+                 rate_limited: bool = False) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+        self.rate_limited = rate_limited
 
 
 class FatalHTTPError(Exception):
@@ -69,12 +71,21 @@ def _parse_retry_after(value: str | None) -> float | None:
         return None  # HTTP-date form; not worth parsing, backoff covers it
 
 
+# Some APIs meter by data volume rather than request count and answer 429 with
+# a stated cooldown but no Retry-After header (Open-Meteo: "try again in one
+# minute"). Exponential-with-jitter tops out well short of that and burns the
+# attempt budget on retries that cannot succeed yet.
+RATE_LIMIT_COOLDOWN_S = 62.0
+
+
 def _wait(retry_state) -> float:
     """Honour Retry-After when the server sends one, else exponential + jitter."""
     exc = retry_state.outcome.exception() if retry_state.outcome else None
     retry_after = getattr(exc, "retry_after", None)
     if retry_after is not None:
         return min(retry_after, 120.0)
+    if getattr(exc, "rate_limited", False):
+        return RATE_LIMIT_COOLDOWN_S
     return wait_exponential_jitter(initial=1, max=60)(retry_state)
 
 
@@ -100,6 +111,7 @@ def get(
         raise RetryableHTTPError(
             f"HTTP {resp.status_code} for {resp.url}: {resp.text[:200]}",
             retry_after=_parse_retry_after(resp.headers.get("Retry-After")),
+            rate_limited=resp.status_code == 429,
         )
     if resp.status_code >= 400:
         # Socrata puts an errorCode in the body; ArcGIS puts error.details.
