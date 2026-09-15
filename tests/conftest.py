@@ -40,7 +40,17 @@ def _warehouse_path():
 
 @pytest.fixture(scope="session")
 def warehouse():
-    con = duckdb.connect(str(_warehouse_path()), read_only=True)
+    """Read-write, deliberately.
+
+    DuckDB refuses a second connection to the same file under a different
+    configuration, so a read-only session fixture makes `pipeline_runner` —
+    which must rebuild — impossible without copying the whole warehouse.
+
+    Safe because the only test that writes is the idempotency proof, and a
+    rebuild that changes anything is exactly the failure that test exists to
+    catch. Every other test only reads.
+    """
+    con = duckdb.connect(str(_warehouse_path()))
     yield con
     con.close()
 
@@ -80,5 +90,15 @@ def silver_geo(warehouse):
 
 
 @pytest.fixture
-def pipeline_runner():
-    pytest.skip("pipeline_runner not implemented yet (Phase 6 orchestration)")
+def pipeline_runner(warehouse):
+    """Rebuilds the derived layers from immutable bronze and fingerprints them.
+
+    Ingestion is deliberately excluded: bronze is the reproducibility boundary,
+    and re-fetching would make the test depend on whether the upstream source
+    changed between runs — a different property from the one under test.
+    """
+    from src.ops import backfill
+
+    for table in ("silver_crash", "bronze_txdot_cris_crash"):
+        _require(warehouse, table)
+    return backfill, warehouse

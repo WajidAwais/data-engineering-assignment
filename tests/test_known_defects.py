@@ -214,4 +214,31 @@ def test_pipeline_is_idempotent_under_restatement(pipeline_runner):
     """Re-running over a date range that includes an amended TxDOT report must
     produce byte-identical output.
     """
-    raise NotImplementedError
+    backfill, con = pipeline_runner
+
+    # A window with no restatements would prove far less. amend_supp_fl marks a
+    # supplemental or amended report — 1,150 of TxDOT's 14,535 rows (7.9%).
+    start, end = backfill.amended_window(con)
+    assert start is not None and end is not None, "no amended TxDOT reports in scope"
+
+    amended = con.execute("""
+        SELECT count(*) FROM bronze_txdot_cris_crash WHERE amend_supp_fl = '1'
+    """).fetchone()[0]
+    assert amended > 0, "the restatement case is not represented in bronze"
+
+    result = backfill.prove(con, "silver_crash", start, end)
+    assert result["identical"], (
+        f"rebuild diverged over {start}..{end}: "
+        f"{result['before'].rows} rows / {result['before'].digest} -> "
+        f"{result['after'].rows} rows / {result['after'].digest}"
+    )
+
+    # Bronze keeps every version of an amended record; silver must collapse each
+    # to exactly one. That is the property a naive re-run would break.
+    duplicated = con.execute("""
+        SELECT count(*) FROM (
+            SELECT source_record_id FROM silver_crash
+             WHERE source_system = 'TXDOT_CRIS'
+             GROUP BY 1 HAVING count(*) > 1)
+    """).fetchone()[0]
+    assert duplicated == 0, f"{duplicated} TxDOT crashes appear more than once after rebuild"
